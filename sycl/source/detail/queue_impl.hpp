@@ -22,6 +22,7 @@
 #include <detail/thread_pool.hpp>
 #include <sycl/context.hpp>
 #include <sycl/detail/assert_happened.hpp>
+#include <sycl/detail/spinlock.hpp>
 #include <sycl/detail/ur.hpp>
 #include <sycl/device.hpp>
 #include <sycl/event.hpp>
@@ -77,6 +78,9 @@ struct SubmissionInfoImpl {
 
 class queue_impl {
 public:
+  // using MMutexT = std::mutex;
+  using MMutexT = SpinLock;
+
   // \return a default context for the platform if it includes the device
   // passed and default contexts are enabled, a new context otherwise.
   static ContextImplPtr getDefaultOrNew(const DeviceImplPtr &Device) {
@@ -100,7 +104,7 @@ public:
   /// \param PropList is a list of properties to use for queue construction.
   queue_impl(const DeviceImplPtr &Device, const async_handler &AsyncHandler,
              const property_list &PropList)
-      : queue_impl(Device, getDefaultOrNew(Device), AsyncHandler, PropList) {};
+      : queue_impl(Device, getDefaultOrNew(Device), AsyncHandler, PropList){};
 
   /// Constructs a SYCL queue with an async_handler and property_list provided
   /// form a device and a context.
@@ -438,7 +442,7 @@ public:
 
     exception_list Exceptions;
     {
-      std::lock_guard<std::mutex> Lock(MMutex);
+      std::lock_guard<MMutexT> Lock(MMutex);
       std::swap(Exceptions, MExceptions);
     }
     // Unlock the mutex before calling user-provided handler to avoid
@@ -563,7 +567,7 @@ public:
     ur_queue_handle_t *PIQ = nullptr;
     bool ReuseQueue = false;
     {
-      std::lock_guard<std::mutex> Lock(MMutex);
+      std::lock_guard<MMutexT> Lock(MMutex);
 
       // To achieve parallelism for FPGA with in order execution model with
       // possibility of two kernels to share data with each other we shall
@@ -657,7 +661,7 @@ public:
   ///
   /// \param ExceptionPtr is a pointer to exception to be put.
   void reportAsyncException(const std::exception_ptr &ExceptionPtr) {
-    std::lock_guard<std::mutex> Lock(MMutex);
+    std::lock_guard<MMutexT> Lock(MMutex);
     MExceptions.PushBack(ExceptionPtr);
   }
 
@@ -693,7 +697,7 @@ public:
 
   void setCommandGraph(
       std::shared_ptr<ext::oneapi::experimental::detail::graph_impl> Graph) {
-    std::lock_guard<std::mutex> Lock(MMutex);
+    std::lock_guard<MMutexT> Lock(MMutex);
     MGraph = Graph;
     MExtGraphDeps.reset();
   }
@@ -710,12 +714,12 @@ public:
   void *getTraceEvent() { return MTraceEvent; }
 
   void setExternalEvent(const event &Event) {
-    std::lock_guard<std::mutex> Lock(MInOrderExternalEventMtx);
+    std::lock_guard<MInOrderExternalEventMtxT> Lock(MInOrderExternalEventMtx);
     MInOrderExternalEvent = Event;
   }
 
   std::optional<event> popExternalEvent() {
-    std::lock_guard<std::mutex> Lock(MInOrderExternalEventMtx);
+    std::lock_guard<MInOrderExternalEventMtxT> Lock(MInOrderExternalEventMtx);
     std::optional<event> Result = std::nullopt;
     std::swap(Result, MInOrderExternalEvent);
     return Result;
@@ -724,7 +728,7 @@ public:
   const std::vector<event> &
   getExtendDependencyList(const std::vector<event> &DepEvents,
                           std::vector<event> &MutableVec,
-                          std::unique_lock<std::mutex> &QueueLock);
+                          std::unique_lock<MMutexT> &QueueLock);
 
   // Called on host task completion that could block some kernels from enqueue.
   // Approach that tracks almost all tasks to provide barrier sync for both ur
@@ -785,7 +789,7 @@ protected:
   event finalizeHandlerInOrder(HandlerType &Handler) {
     // Accessing and changing of an event isn't atomic operation.
     // Hence, here is the lock for thread-safety.
-    std::lock_guard<std::mutex> Lock{MMutex};
+    std::lock_guard<MMutexT> Lock{MMutex};
 
     auto &EventToBuildDeps = MGraph.expired() ? MDefaultGraphDeps.LastEventPtr
                                               : MExtGraphDeps.LastEventPtr;
@@ -827,7 +831,7 @@ protected:
   template <typename HandlerType = handler>
   event finalizeHandlerOutOfOrder(HandlerType &Handler) {
     const CGType Type = getSyclObjImpl(Handler)->MCGType;
-    std::lock_guard<std::mutex> Lock{MMutex};
+    std::lock_guard<MMutexT> Lock{MMutex};
     // The following code supports barrier synchronization if host task is
     // involved in the scenario. Native barriers cannot handle host task
     // dependency so in the case where some commands were not enqueued
@@ -980,7 +984,7 @@ protected:
   void addEvent(const event &Event);
 
   /// Protects all the fields that can be changed by class' methods.
-  mutable std::mutex MMutex;
+  mutable MMutexT MMutex;
 
   DeviceImplPtr MDevice;
   const ContextImplPtr MContext;
@@ -1045,7 +1049,8 @@ protected:
   // Access to the event should be guarded with MInOrderExternalEventMtx.
   // NOTE: std::optional must not be exposed in the ABI.
   std::optional<event> MInOrderExternalEvent;
-  mutable std::mutex MInOrderExternalEventMtx;
+  using MInOrderExternalEventMtxT = SpinLock;
+  mutable MInOrderExternalEventMtxT MInOrderExternalEventMtx;
 
 public:
   // Queue constructed with the discard_events property

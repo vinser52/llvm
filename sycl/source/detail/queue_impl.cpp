@@ -132,7 +132,7 @@ static event createDiscardedEvent() {
 const std::vector<event> &
 queue_impl::getExtendDependencyList(const std::vector<event> &DepEvents,
                                     std::vector<event> &MutableVec,
-                                    std::unique_lock<std::mutex> &QueueLock) {
+                                    std::unique_lock<MMutexT> &QueueLock) {
   if (!isInOrder())
     return DepEvents;
 
@@ -287,12 +287,12 @@ sycl::detail::optional<event> queue_impl::getLastEvent() {
   {
     // The external event is required to finish last if set, so it is considered
     // the last event if present.
-    std::lock_guard<std::mutex> Lock(MInOrderExternalEventMtx);
+    std::lock_guard<MInOrderExternalEventMtxT> Lock(MInOrderExternalEventMtx);
     if (MInOrderExternalEvent)
       return *MInOrderExternalEvent;
   }
 
-  std::lock_guard<std::mutex> Lock{MMutex};
+  std::lock_guard<MMutexT> Lock{MMutex};
   if (MGraph.expired() && !MDefaultGraphDeps.LastEventPtr)
     return std::nullopt;
   if (MDiscardEvents)
@@ -318,7 +318,7 @@ void queue_impl::addEvent(const event &Event) {
   else if (MEmulateOOO ||
            (EImpl->getHandle() == nullptr && !EImpl->isDiscarded())) {
     std::weak_ptr<event_impl> EventWeakPtr{EImpl};
-    std::lock_guard<std::mutex> Lock{MMutex};
+    std::lock_guard<MMutexT> Lock{MMutex};
     MEventsWeak.push_back(std::move(EventWeakPtr));
   }
 }
@@ -328,7 +328,7 @@ void queue_impl::addEvent(const event &Event) {
 /// addSharedEvent will have the queue track the events via a shared pointer.
 void queue_impl::addSharedEvent(const event &Event) {
   assert(MEmulateOOO);
-  std::lock_guard<std::mutex> Lock(MMutex);
+  std::lock_guard<MMutexT> Lock(MMutex);
   // Events stored in MEventsShared are not released anywhere else aside from
   // calls to queue::wait/wait_and_throw, which a user application might not
   // make, and ~queue_impl(). If the number of events grows large enough,
@@ -436,7 +436,7 @@ event queue_impl::submitMemOpHelper(const std::shared_ptr<queue_impl> &Self,
   // We need to submit command and update the last event under same lock if we
   // have in-order queue.
   {
-    std::unique_lock<std::mutex> Lock(MMutex, std::defer_lock);
+    std::unique_lock<MMutexT> Lock(MMutex, std::defer_lock);
 
     std::vector<event> MutableDepEvents;
     const std::vector<event> &ExpandedDepEvents =
@@ -601,7 +601,7 @@ void queue_impl::wait(const detail::code_location &CodeLoc) {
     // Additionally, we can clean up the event lists that we would have
     // otherwise cleared.
     if (!MEventsWeak.empty() || !MEventsShared.empty()) {
-      std::lock_guard<std::mutex> Lock(MMutex);
+      std::lock_guard<MMutexT> Lock(MMutex);
       MEventsWeak.clear();
       MEventsShared.clear();
     }
@@ -614,7 +614,7 @@ void queue_impl::wait(const detail::code_location &CodeLoc) {
   std::vector<std::weak_ptr<event_impl>> WeakEvents;
   std::vector<event> SharedEvents;
   {
-    std::lock_guard<std::mutex> Lock(MMutex);
+    std::lock_guard<MMutexT> Lock(MMutex);
     WeakEvents.swap(MEventsWeak);
     SharedEvents.swap(MEventsShared);
 
@@ -742,7 +742,7 @@ bool queue_impl::ext_oneapi_empty() const {
   // If we have in-order queue where events are not discarded then just check
   // the status of the last event.
   if (isInOrder() && !MDiscardEvents) {
-    std::lock_guard<std::mutex> Lock(MMutex);
+    std::lock_guard<MMutexT> Lock(MMutex);
     // If there is no last event we know that no work has been submitted, so it
     // must be trivially empty.
     if (!MDefaultGraphDeps.LastEventPtr)
@@ -765,7 +765,7 @@ bool queue_impl::ext_oneapi_empty() const {
 
   // We may have events like host tasks which are not submitted to the backend
   // queue so we need to get their status separately.
-  std::lock_guard<std::mutex> Lock(MMutex);
+  std::lock_guard<MMutexT> Lock(MMutex);
   for (event Event : MEventsShared)
     if (Event.get_info<info::event::command_execution_status>() !=
         info::event_command_status::complete)
@@ -796,7 +796,7 @@ void queue_impl::revisitUnenqueuedCommandsState(
     const EventImplPtr &CompletedHostTask) {
   if (MIsInorder)
     return;
-  std::unique_lock<std::mutex> Lock{MMutex, std::try_to_lock};
+  std::unique_lock<MMutexT> Lock{MMutex, std::try_to_lock};
   if (Lock.owns_lock())
     doUnenqueuedCommandCleanup(CompletedHostTask->getCommandGraph());
   else {
