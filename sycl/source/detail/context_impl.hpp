@@ -13,6 +13,7 @@
 #include <detail/program_manager/program_manager.hpp>
 #include <sycl/detail/common.hpp>
 #include <sycl/detail/os_util.hpp>
+#include <sycl/detail/spinlock.hpp>
 #include <sycl/detail/ur.hpp>
 #include <sycl/exception_list.hpp>
 #include <sycl/info/info_desc.hpp>
@@ -297,7 +298,10 @@ private:
   std::map<std::pair<ur_program_handle_t, ur_device_handle_t>,
            DeviceGlobalInitializer>
       MDeviceGlobalInitializers;
-  std::mutex MDeviceGlobalInitializersMutex;
+  using MDeviceGlobalInitializersMutexT = SpinLock;
+  using MDeviceGlobalInitializersLockT =
+      std::lock_guard<MDeviceGlobalInitializersMutexT>;
+  MDeviceGlobalInitializersMutexT MDeviceGlobalInitializersMutex;
 
   // For device_global variables that are not used in any kernel code we still
   // allow copy operations on them. MDeviceGlobalUnregisteredData stores the

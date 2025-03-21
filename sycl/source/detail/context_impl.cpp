@@ -338,7 +338,7 @@ void context_impl::removeAssociatedDeviceGlobal(const void *DeviceGlobalPtr) {
 void context_impl::addDeviceGlobalInitializer(
     ur_program_handle_t Program, const std::vector<device> &Devs,
     const RTDeviceBinaryImage *BinImage) {
-  std::lock_guard<std::mutex> Lock(MDeviceGlobalInitializersMutex);
+  MDeviceGlobalInitializersLockT Lock(MDeviceGlobalInitializersMutex);
   for (const device &Dev : Devs) {
     auto Key = std::make_pair(Program, getSyclObjImpl(Dev)->getHandleRef());
     MDeviceGlobalInitializers.emplace(Key, BinImage);
@@ -350,12 +350,16 @@ std::vector<ur_event_handle_t> context_impl::initializeDeviceGlobals(
     const std::shared_ptr<queue_impl> &QueueImpl) {
   const AdapterPtr &Adapter = getAdapter();
   const DeviceImplPtr &DeviceImpl = QueueImpl->getDeviceImplPtr();
-  std::lock_guard<std::mutex> NativeProgramLock(MDeviceGlobalInitializersMutex);
-  auto ImgIt = MDeviceGlobalInitializers.find(
-      std::make_pair(NativePrg, DeviceImpl->getHandleRef()));
-  if (ImgIt == MDeviceGlobalInitializers.end() ||
-      ImgIt->second.MDeviceGlobalsFullyInitialized)
-    return {};
+  decltype(MDeviceGlobalInitializers.end()) ImgIt;
+  {
+    MDeviceGlobalInitializersLockT NativeProgramLock(
+        MDeviceGlobalInitializersMutex);
+    ImgIt = MDeviceGlobalInitializers.find(
+        std::make_pair(NativePrg, DeviceImpl->getHandleRef()));
+    if (ImgIt == MDeviceGlobalInitializers.end() ||
+        ImgIt->second.MDeviceGlobalsFullyInitialized)
+      return {};
+  }
 
   DeviceGlobalInitializer &InitRef = ImgIt->second;
   {
