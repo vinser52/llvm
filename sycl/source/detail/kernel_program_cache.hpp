@@ -15,6 +15,7 @@
 #include <sycl/detail/common.hpp>
 #include <sycl/detail/locked.hpp>
 #include <sycl/detail/os_util.hpp>
+#include <sycl/detail/spinlock.hpp>
 #include <sycl/detail/ur.hpp>
 #include <sycl/detail/util.hpp>
 
@@ -421,7 +422,7 @@ public:
 
   template <typename KeyT>
   KernelFastCacheValT tryToGetKernelFast(KeyT &&CacheKey) {
-    std::unique_lock<std::mutex> Lock(MKernelFastCacheMutex);
+    MKernelFastCacheLockT Lock(MKernelFastCacheMutex);
     auto It = MKernelFastCache.find(CacheKey);
     if (It != MKernelFastCache.end()) {
       traceKernel("Kernel fetched.", CacheKey.second, true);
@@ -445,7 +446,7 @@ public:
         return;
     }
     // Save reference between the program and the fast cache key.
-    std::unique_lock<std::mutex> Lock(MKernelFastCacheMutex);
+    MKernelFastCacheLockT Lock(MKernelFastCacheMutex);
     MProgramToKernelFastCacheKeyMap[Program].emplace_back(CacheKey);
 
     // if no insertion took place, thus some other thread has already inserted
@@ -483,7 +484,7 @@ public:
 
       {
         // Remove corresponding entries from KernelFastCache.
-        std::unique_lock<std::mutex> Lock(MKernelFastCacheMutex);
+        MKernelFastCacheLockT Lock(MKernelFastCacheMutex);
         if (auto FastCacheKeyItr =
                 MProgramToKernelFastCacheKeyMap.find(NativePrg);
             FastCacheKeyItr != MProgramToKernelFastCacheKeyMap.end()) {
@@ -630,7 +631,7 @@ public:
     std::lock_guard<std::mutex> EvictionListLock(MProgramEvictionListMutex);
     std::lock_guard<std::mutex> L1(MProgramCacheMutex);
     std::lock_guard<std::mutex> L2(MKernelsPerProgramCacheMutex);
-    std::lock_guard<std::mutex> L3(MKernelFastCacheMutex);
+    MKernelFastCacheLockT L3(MKernelFastCacheMutex);
     MCachedPrograms = ProgramCache{};
     MKernelsPerProgramCache = KernelCacheT{};
     MKernelFastCache = KernelFastCacheT{};
@@ -758,7 +759,9 @@ private:
   KernelCacheT MKernelsPerProgramCache;
   ContextPtr MParentContext;
 
-  std::mutex MKernelFastCacheMutex;
+  using MKernelFastCacheMutexT = SpinLock;
+  using MKernelFastCacheLockT = std::lock_guard<MKernelFastCacheMutexT>;
+  MKernelFastCacheMutexT MKernelFastCacheMutex;
   KernelFastCacheT MKernelFastCache;
 
   // Map between fast kernel cache keys and program handle.
