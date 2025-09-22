@@ -28,16 +28,13 @@ public:
     switch (getType()) {
     case detail::CGType::Kernel: {
       CommandGroup.reset(new detail::CGExecKernel(
-          getNDRDesc(), std::move(getHostKernel()), getKernel(),
+          impl->MKernelData, std::move(getHostKernel()), getKernel(),
           std::move(impl->MKernelBundle),
           detail::CG::StorageInitHelper(getArgsStorage(), getAccStorage(),
                                         getSharedPtrStorage(),
                                         getRequirements(), getEvents()),
-          getArgs(), *impl->MKernelData.getDeviceKernelInfoPtr(),
           getStreamStorage(), std::move(impl->MAuxiliaryResources), getType(),
-          {}, impl->MKernelData.isCooperative(),
-          impl->MKernelData.usesClusterLaunch(),
-          impl->MKernelData.getKernelWorkGroupMemorySize(), getCodeLoc()));
+          getCodeLoc()));
       break;
     }
     default:

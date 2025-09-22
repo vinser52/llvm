@@ -740,8 +740,8 @@ ur_exp_command_buffer_sync_point_t exec_graph_impl::enqueueNodeDirect(
                                         CGExec->MLine, CGExec->MColumn);
     std::tie(CmdTraceEvent, InstanceID) = emitKernelInstrumentationData(
         StreamID, CGExec->MSyclKernel, CodeLoc, CGExec->MIsTopCodeLoc,
-        CGExec->MDeviceKernelInfo, nullptr, CGExec->MNDRDesc,
-        CGExec->MKernelBundle.get(), CGExec->MArgs);
+        CGExec->getDeviceKernelInfo(), nullptr, CGExec->getNDRDesc(),
+        CGExec->MKernelBundle.get(), CGExec->getArguments());
     if (CmdTraceEvent)
       sycl::detail::emitInstrumentationGeneral(
           StreamID, InstanceID, CmdTraceEvent, xpti::trace_task_begin, nullptr);
@@ -1555,7 +1555,7 @@ void exec_graph_impl::populateURKernelUpdateStructs(
   // Copy args because we may modify them
   std::vector<sycl::detail::ArgDesc> NodeArgs = ExecCG.getArguments();
   // Copy NDR desc since we need to modify it
-  NDRDesc = ExecCG.MNDRDesc;
+  NDRDesc = ExecCG.getNDRDesc();
 
   ur_kernel_handle_t UrKernel = nullptr;
   auto Kernel = ExecCG.MSyclKernel;
@@ -1566,14 +1566,14 @@ void exec_graph_impl::populateURKernelUpdateStructs(
     UrKernel = Kernel->getHandleRef();
     EliminatedArgMask = Kernel->getKernelArgMask();
   } else if (auto SyclKernelImpl =
-                 KernelBundleImplPtr ? KernelBundleImplPtr->tryGetKernel(
-                                           ExecCG.MDeviceKernelInfo.Name)
-                                     : std::shared_ptr<kernel_impl>{nullptr}) {
+                 KernelBundleImplPtr
+                     ? KernelBundleImplPtr->tryGetKernel(ExecCG.getKernelName())
+                     : std::shared_ptr<kernel_impl>{nullptr}) {
     UrKernel = SyclKernelImpl->getHandleRef();
     EliminatedArgMask = SyclKernelImpl->getKernelArgMask();
   } else {
     BundleObjs = sycl::detail::ProgramManager::getInstance().getOrCreateKernel(
-        ContextImpl, DeviceImpl, ExecCG.MDeviceKernelInfo);
+        ContextImpl, DeviceImpl, ExecCG.getDeviceKernelInfo());
     UrKernel = BundleObjs->MKernelHandle;
     EliminatedArgMask = BundleObjs->MKernelArgMask;
   }

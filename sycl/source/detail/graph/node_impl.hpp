@@ -230,7 +230,7 @@ public:
     switch (MCGType) {
     case sycl::detail::CGType::Kernel: {
       auto CGCopy = createCGCopy<sycl::detail::CGExecKernel>();
-      rebuildArgStorage(CGCopy->MArgs, MCommandGroup->getArgsStorage(),
+      rebuildArgStorage(CGCopy->getArguments(), MCommandGroup->getArgsStorage(),
                         CGCopy->getArgsStorage());
       return std::move(CGCopy);
     }
@@ -418,7 +418,7 @@ public:
 
     auto &NDRDesc =
         static_cast<sycl::detail::CGExecKernel *>(MCommandGroup.get())
-            ->MNDRDesc;
+            ->getNDRDesc();
 
     if (NDRDesc.Dims != Dimensions) {
       throw sycl::exception(sycl::errc::invalid,
@@ -439,7 +439,7 @@ public:
 
     auto &NDRDesc =
         static_cast<sycl::detail::CGExecKernel *>(MCommandGroup.get())
-            ->MNDRDesc;
+            ->getNDRDesc();
 
     if (NDRDesc.Dims != Dimensions) {
       throw sycl::exception(sycl::errc::invalid,
@@ -546,8 +546,9 @@ private:
       Stream << "NAME = " << Kernel->getKernelName() << "\\n";
       if (Verbose) {
         Stream << "ARGS = \\n";
-        for (size_t i = 0; i < Kernel->MArgs.size(); i++) {
-          auto Arg = Kernel->MArgs[i];
+        auto &Args = Kernel->getArguments();
+        for (size_t i = 0; i < Args.size(); i++) {
+          auto Arg = Args[i];
           std::string Type = "Undefined";
           if (Arg.MType == sycl::detail::kernel_param_kind_t::kind_accessor) {
             Type = "Accessor";

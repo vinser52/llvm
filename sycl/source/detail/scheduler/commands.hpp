@@ -625,13 +625,11 @@ private:
 };
 
 void enqueueImpKernel(
-    queue_impl &Queue, NDRDescT &NDRDesc, std::vector<ArgDesc> &Args,
+    queue_impl &Queue, KernelData &KernelData,
     detail::kernel_bundle_impl *KernelBundleImplPtr,
-    const detail::kernel_impl *MSyclKernel, DeviceKernelInfo &DeviceKernelInfo,
+    const detail::kernel_impl *MSyclKernel,
     std::vector<ur_event_handle_t> &RawEvents, detail::event_impl *OutEventImpl,
     const std::function<void *(Requirement *Req)> &getMemAllocationFunc,
-    ur_kernel_cache_config_t KernelCacheConfig, bool KernelIsCooperative,
-    const bool KernelUsesClusterLaunch, const size_t WorkGroupMemorySize,
     const RTDeviceBinaryImage *BinImage = nullptr,
     void *KernelFuncPtr = nullptr);
 

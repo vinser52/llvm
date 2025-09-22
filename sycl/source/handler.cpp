@@ -670,16 +670,10 @@ event handler::finalize() {
                                                   impl->getKernelName());
           assert(BinImage && "Failed to obtain a binary image.");
         }
-        enqueueImpKernel(impl->get_queue(), impl->MKernelData.getNDRDesc(),
-                         impl->MKernelData.getArgs(), KernelBundleImpPtr,
-                         MKernel.get(),
-                         *impl->MKernelData.getDeviceKernelInfoPtr(), RawEvents,
-                         ResultEvent.get(), nullptr,
-                         impl->MKernelData.getKernelCacheConfig(),
-                         impl->MKernelData.isCooperative(),
-                         impl->MKernelData.usesClusterLaunch(),
-                         impl->MKernelData.getKernelWorkGroupMemorySize(),
-                         BinImage, impl->MKernelData.getKernelFuncPtr());
+        enqueueImpKernel(impl->get_queue(), impl->MKernelData,
+                         KernelBundleImpPtr, MKernel.get(), RawEvents,
+                         ResultEvent.get(), nullptr, BinImage,
+                         impl->MKernelData.getKernelFuncPtr());
 #ifdef XPTI_ENABLE_INSTRUMENTATION
         if (xptiEnabled) {
           // Emit signal only when event is created
@@ -733,15 +727,10 @@ event handler::finalize() {
     // assert feature to check if kernel uses assertions
 #endif
     CommandGroup.reset(new detail::CGExecKernel(
-        impl->MKernelData.getNDRDesc(), std::move(MHostKernel),
+        std::move(impl->MKernelData), std::move(MHostKernel),
         std::move(MKernel), std::move(impl->MKernelBundle),
-        std::move(impl->CGData), std::move(impl->MKernelData).getArgs(),
-        *impl->MKernelData.getDeviceKernelInfoPtr(), std::move(MStreamStorage),
-        std::move(impl->MAuxiliaryResources), getType(),
-        impl->MKernelData.getKernelCacheConfig(),
-        impl->MKernelData.isCooperative(),
-        impl->MKernelData.usesClusterLaunch(),
-        impl->MKernelData.getKernelWorkGroupMemorySize(), MCodeLoc));
+        std::move(impl->CGData), std::move(MStreamStorage),
+        std::move(impl->MAuxiliaryResources), getType(), MCodeLoc));
     break;
   }
   case detail::CGType::CopyAccToPtr:

@@ -303,13 +303,9 @@ public:
     switch (getType()) {
     case sycl::detail::CGType::Kernel: {
       CommandGroup.reset(new sycl::detail::CGExecKernel(
-          getNDRDesc(), std::move(getHostKernel()), getKernel(),
-          std::move(impl->MKernelBundle), std::move(CGData), getArgs(),
-          *impl->MKernelData.getDeviceKernelInfoPtr(), getStreamStorage(),
-          impl->MAuxiliaryResources, getType(), {},
-          impl->MKernelData.isCooperative(),
-          impl->MKernelData.usesClusterLaunch(),
-          impl->MKernelData.getKernelWorkGroupMemorySize(), getCodeLoc()));
+          impl->MKernelData, std::move(getHostKernel()), getKernel(),
+          std::move(impl->MKernelBundle), std::move(CGData), getStreamStorage(),
+          impl->MAuxiliaryResources, getType(), getCodeLoc()));
       break;
     }
     case sycl::detail::CGType::CodeplayHostTask: {

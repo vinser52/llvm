@@ -313,8 +313,8 @@ bool Command::isFusable() const {
   }
   const auto &CG = (static_cast<const ExecCGCommand &>(*this)).getCG();
   return (CG.getType() == CGType::Kernel) &&
-         (!static_cast<const CGExecKernel &>(CG).MKernelIsCooperative) &&
-         (!static_cast<const CGExecKernel &>(CG).MKernelUsesClusterLaunch);
+         (!static_cast<const CGExecKernel &>(CG).isCooperativeKernel()) &&
+         (!static_cast<const CGExecKernel &>(CG).kernelUsesClusterLaunch());
 }
 #endif // __INTEL_PREVIEW_BREAKING_CHANGES
 
@@ -2191,9 +2191,9 @@ void ExecCGCommand::emitInstrumentationData() {
       auto KernelCG =
           reinterpret_cast<detail::CGExecKernel *>(MCommandGroup.get());
       instrumentationAddExtraKernelMetadata(
-          CmdTraceEvent, KernelCG->MNDRDesc, KernelCG->getKernelBundle().get(),
-          KernelCG->MDeviceKernelInfo, KernelCG->MSyclKernel, MQueue.get(),
-          KernelCG->MArgs);
+          CmdTraceEvent, KernelCG->getNDRDesc(),
+          KernelCG->getKernelBundle().get(), KernelCG->getDeviceKernelInfo(),
+          KernelCG->MSyclKernel, MQueue.get(), KernelCG->getArguments());
     }
 
     xptiNotifySubscribers(
@@ -2387,14 +2387,13 @@ static void SetArgBasedOnType(
 }
 
 static ur_result_t SetKernelParamsAndLaunch(
-    queue_impl &Queue, std::vector<ArgDesc> &Args,
+    queue_impl &Queue, KernelData &KernelData,
     device_image_impl *DeviceImageImpl, ur_kernel_handle_t Kernel,
-    NDRDescT &NDRDesc, std::vector<ur_event_handle_t> &RawEvents,
-    detail::event_impl *OutEventImpl, const KernelArgMask *EliminatedArgMask,
+    std::vector<ur_event_handle_t> &RawEvents, detail::event_impl *OutEventImpl,
+    const KernelArgMask *EliminatedArgMask,
     const std::function<void *(Requirement *Req)> &getMemAllocationFunc,
-    bool IsCooperative, bool KernelUsesClusterLaunch,
-    uint32_t WorkGroupMemorySize, const RTDeviceBinaryImage *BinImage,
-    DeviceKernelInfo &DeviceKernelInfo, void *KernelFuncPtr = nullptr) {
+    const RTDeviceBinaryImage *BinImage, DeviceKernelInfo &DeviceKernelInfo,
+    void *KernelFuncPtr = nullptr) {
   adapter_impl &Adapter = Queue.getAdapter();
 
   if (SYCLConfig<SYCL_JIT_AMDGCN_PTX_KERNELS>::get()) {
@@ -2434,9 +2433,10 @@ static ur_result_t SetKernelParamsAndLaunch(
       SetArgBasedOnType(Adapter, Kernel, DeviceImageImpl, getMemAllocationFunc,
                         Queue.getContextImpl(), Arg, NextTrueIndex);
     };
-    applyFuncOnFilteredArgs(EliminatedArgMask, Args, setFunc);
+    applyFuncOnFilteredArgs(EliminatedArgMask, KernelData.getArgs(), setFunc);
   }
 
+  uint32_t WorkGroupMemorySize = KernelData.getKernelWorkGroupMemorySize();
   const std::optional<int> &ImplicitLocalArg =
       DeviceKernelInfo.getImplicitLocalArgPos();
   // Set the implicit local memory buffer to support
@@ -2448,6 +2448,7 @@ static ur_result_t SetKernelParamsAndLaunch(
         Kernel, ImplicitLocalArg.value(), WorkGroupMemorySize, nullptr);
   }
 
+  NDRDescT &NDRDesc = KernelData.getNDRDesc();
   adjustNDRangePerKernel(NDRDesc, Kernel, Queue.getDeviceImpl());
 
   // Remember this information before the range dimensions are reversed
@@ -2479,7 +2480,7 @@ static ur_result_t SetKernelParamsAndLaunch(
 
   std::vector<ur_kernel_launch_property_t> property_list;
 
-  if (KernelUsesClusterLaunch) {
+  if (KernelData.usesClusterLaunch()) {
     ur_kernel_launch_property_value_t launch_property_value_cluster_range;
     launch_property_value_cluster_range.clusterDim[0] =
         NDRDesc.ClusterDimensions[0];
@@ -2491,7 +2492,7 @@ static ur_result_t SetKernelParamsAndLaunch(
     property_list.push_back({UR_KERNEL_LAUNCH_PROPERTY_ID_CLUSTER_DIMENSION,
                              launch_property_value_cluster_range});
   }
-  if (IsCooperative) {
+  if (KernelData.isCooperative()) {
     ur_kernel_launch_property_value_t launch_property_value_cooperative;
     launch_property_value_cooperative.cooperative = 1;
     property_list.push_back({UR_KERNEL_LAUNCH_PROPERTY_ID_COOPERATIVE,
@@ -2533,7 +2534,7 @@ getCGKernelInfo(const CGExecKernel &CommandGroup, context_impl &ContextImpl,
     EliminatedArgMask = Kernel->getKernelArgMask();
   } else if (auto SyclKernelImpl =
                  KernelBundleImplPtr ? KernelBundleImplPtr->tryGetKernel(
-                                           CommandGroup.MDeviceKernelInfo.Name)
+                                           CommandGroup.getKernelName())
                                      : std::shared_ptr<kernel_impl>{nullptr}) {
     UrKernel = SyclKernelImpl->getHandleRef();
     DeviceImageImpl = &SyclKernelImpl->getDeviceImage();
@@ -2541,7 +2542,7 @@ getCGKernelInfo(const CGExecKernel &CommandGroup, context_impl &ContextImpl,
   } else {
     FastKernelCacheValPtr FastKernelCacheVal =
         sycl::detail::ProgramManager::getInstance().getOrCreateKernel(
-            ContextImpl, DeviceImpl, CommandGroup.MDeviceKernelInfo);
+            ContextImpl, DeviceImpl, CommandGroup.getDeviceKernelInfo());
     UrKernel = FastKernelCacheVal->MKernelHandle;
     EliminatedArgMask = FastKernelCacheVal->MKernelArgMask;
     // To keep UrKernel valid, we return FastKernelCacheValPtr.
@@ -2596,14 +2597,14 @@ ur_result_t enqueueImpCommandBufferKernel(
                                     NextTrueIndex);
   };
   // Copy args for modification
-  auto Args = CommandGroup.MArgs;
+  auto Args = CommandGroup.getArguments();
   sycl::detail::applyFuncOnFilteredArgs(EliminatedArgMask, Args, SetFunc);
 
   // Remember this information before the range dimensions are reversed
-  const bool HasLocalSize = (CommandGroup.MNDRDesc.LocalSize[0] != 0);
+  const bool HasLocalSize = (CommandGroup.getNDRDesc().LocalSize[0] != 0);
 
   // Copy NDRDesc for modification
-  auto NDRDesc = CommandGroup.MNDRDesc;
+  auto NDRDesc = CommandGroup.getNDRDesc();
   // Reverse kernel dims
   sycl::detail::ReverseRangeDimensionsForKernel(NDRDesc);
 
@@ -2653,13 +2654,11 @@ ur_result_t enqueueImpCommandBufferKernel(
 }
 
 void enqueueImpKernel(
-    queue_impl &Queue, NDRDescT &NDRDesc, std::vector<ArgDesc> &Args,
+    queue_impl &Queue, KernelData &KernelData,
     detail::kernel_bundle_impl *KernelBundleImplPtr,
-    const detail::kernel_impl *MSyclKernel, DeviceKernelInfo &DeviceKernelInfo,
+    const detail::kernel_impl *MSyclKernel,
     std::vector<ur_event_handle_t> &RawEvents, detail::event_impl *OutEventImpl,
     const std::function<void *(Requirement *Req)> &getMemAllocationFunc,
-    ur_kernel_cache_config_t KernelCacheConfig, const bool KernelIsCooperative,
-    const bool KernelUsesClusterLaunch, const size_t WorkGroupMemorySize,
     const RTDeviceBinaryImage *BinImage, void *KernelFuncPtr) {
   // Run OpenCL kernel
   context_impl &ContextImpl = Queue.getContextImpl();
@@ -2687,10 +2686,10 @@ void enqueueImpKernel(
     // their duplication in such cases.
     KernelMutex = &MSyclKernel->getNoncacheableEnqueueMutex();
     EliminatedArgMask = MSyclKernel->getKernelArgMask();
-  } else if ((SyclKernelImpl =
-                  KernelBundleImplPtr
-                      ? KernelBundleImplPtr->tryGetKernel(DeviceKernelInfo.Name)
-                      : std::shared_ptr<kernel_impl>{nullptr})) {
+  } else if ((SyclKernelImpl = KernelBundleImplPtr
+                                   ? KernelBundleImplPtr->tryGetKernel(
+                                         KernelData.getKernelName())
+                                   : std::shared_ptr<kernel_impl>{nullptr})) {
     Kernel = SyclKernelImpl->getHandleRef();
     DeviceImageImpl = &SyclKernelImpl->getDeviceImage();
 
@@ -2700,7 +2699,8 @@ void enqueueImpKernel(
     KernelMutex = SyclKernelImpl->getCacheMutex();
   } else {
     KernelCacheVal = detail::ProgramManager::getInstance().getOrCreateKernel(
-        ContextImpl, DeviceImpl, DeviceKernelInfo, NDRDesc);
+        ContextImpl, DeviceImpl, *KernelData.getDeviceKernelInfoPtr(),
+        KernelData.getNDRDesc());
     Kernel = KernelCacheVal->MKernelHandle;
     KernelMutex = KernelCacheVal->MMutex;
     Program = KernelCacheVal->MProgramHandle;
@@ -2735,6 +2735,8 @@ void enqueueImpKernel(
 
     // Set SLM/Cache configuration for the kernel if non-default value is
     // provided.
+    ur_kernel_cache_config_t KernelCacheConfig =
+        KernelData.getKernelCacheConfig();
     if (KernelCacheConfig == UR_KERNEL_CACHE_CONFIG_LARGE_SLM ||
         KernelCacheConfig == UR_KERNEL_CACHE_CONFIG_LARGE_DATA) {
       adapter_impl &Adapter = Queue.getAdapter();
@@ -2744,16 +2746,15 @@ void enqueueImpKernel(
     }
 
     Error = SetKernelParamsAndLaunch(
-        Queue, Args, DeviceImageImpl, Kernel, NDRDesc, EventsWaitList,
-        OutEventImpl, EliminatedArgMask, getMemAllocationFunc,
-        KernelIsCooperative, KernelUsesClusterLaunch, WorkGroupMemorySize,
-        BinImage, DeviceKernelInfo, KernelFuncPtr);
+        Queue, KernelData, DeviceImageImpl, Kernel, EventsWaitList,
+        OutEventImpl, EliminatedArgMask, getMemAllocationFunc, BinImage,
+        *KernelData.getDeviceKernelInfoPtr(), KernelData.getKernelFuncPtr());
   }
   if (UR_RESULT_SUCCESS != Error) {
     // If we have got non-success error code, let's analyze it to emit nice
     // exception explaining what was wrong
-    detail::enqueue_kernel_launch::handleErrorOrWarning(Error, DeviceImpl,
-                                                        Kernel, NDRDesc);
+    detail::enqueue_kernel_launch::handleErrorOrWarning(
+        Error, DeviceImpl, Kernel, KernelData.getNDRDesc());
   }
 }
 
@@ -3218,12 +3219,12 @@ ur_result_t ExecCGCommand::enqueueImpQueue() {
 
     const std::shared_ptr<detail::kernel_impl> &SyclKernel =
         ExecKernel->MSyclKernel;
-    KernelNameStrRefT KernelName = ExecKernel->MDeviceKernelInfo.Name;
+    KernelNameStrRefT KernelName = ExecKernel->getKernelName();
 
     if (!EventImpl) {
       // Kernel only uses assert if it's non interop one
       bool KernelUsesAssert = (!SyclKernel || SyclKernel->hasSYCLMetadata()) &&
-                              ExecKernel->MDeviceKernelInfo.usesAssert();
+                              ExecKernel->kernelUsesAsserts();
       if (KernelUsesAssert) {
         EventImpl = MEvent.get();
       }
@@ -3234,13 +3235,9 @@ ur_result_t ExecCGCommand::enqueueImpQueue() {
       BinImage = retrieveKernelBinary(*MQueue, KernelName);
       assert(BinImage && "Failed to obtain a binary image.");
     }
-    enqueueImpKernel(*MQueue, ExecKernel->MNDRDesc, ExecKernel->MArgs,
+    enqueueImpKernel(*MQueue, ExecKernel->MKernelData,
                      ExecKernel->getKernelBundle().get(), SyclKernel.get(),
-                     ExecKernel->MDeviceKernelInfo, RawEvents, EventImpl,
-                     getMemAllocationFunc, ExecKernel->MKernelCacheConfig,
-                     ExecKernel->MKernelIsCooperative,
-                     ExecKernel->MKernelUsesClusterLaunch,
-                     ExecKernel->MKernelWorkGroupMemorySize, BinImage);
+                     RawEvents, EventImpl, getMemAllocationFunc, BinImage);
 
     return UR_RESULT_SUCCESS;
   }
@@ -3816,7 +3813,7 @@ ur_result_t UpdateCommandBufferCommand::enqueueImp() {
     switch (Node->MNodeType) {
     case ext::oneapi::experimental::node_type::kernel: {
       auto CGExec = static_cast<CGExecKernel *>(CG);
-      for (auto &Arg : CGExec->MArgs) {
+      for (auto &Arg : CGExec->getArguments()) {
         if (Arg.MType != kernel_param_kind_t::kind_accessor) {
           continue;
         }

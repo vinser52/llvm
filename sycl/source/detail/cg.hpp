@@ -22,6 +22,7 @@
 
 #include <detail/device_kernel_info.hpp>
 #include <detail/kernel_arg_desc.hpp>
+#include <detail/kernel_data.hpp>
 #include <detail/ndrange_desc.hpp>
 
 #include <assert.h> // for assert
@@ -143,50 +144,56 @@ public:
 /// "Execute kernel" command group class.
 class CGExecKernel : public CG {
 public:
+  KernelData MKernelData;
   /// Stores ND-range description.
-  NDRDescT MNDRDesc;
   std::shared_ptr<HostKernelBase> MHostKernel;
   std::shared_ptr<detail::kernel_impl> MSyclKernel;
   std::shared_ptr<detail::kernel_bundle_impl> MKernelBundle;
-  std::vector<ArgDesc> MArgs;
-  DeviceKernelInfo &MDeviceKernelInfo;
   std::vector<std::shared_ptr<detail::stream_impl>> MStreams;
   std::vector<std::shared_ptr<const void>> MAuxiliaryResources;
   /// Used to implement ext_oneapi_graph dynamic_command_group. Stores the list
   /// of command-groups that a kernel command can be updated to.
   std::vector<std::weak_ptr<CGExecKernel>> MAlternativeKernels;
-  ur_kernel_cache_config_t MKernelCacheConfig;
-  bool MKernelIsCooperative = false;
-  bool MKernelUsesClusterLaunch = false;
-  size_t MKernelWorkGroupMemorySize = 0;
 
-  CGExecKernel(const NDRDescT &NDRDesc, std::shared_ptr<HostKernelBase> HKernel,
+  CGExecKernel(KernelData KernelData, std::shared_ptr<HostKernelBase> HKernel,
                std::shared_ptr<detail::kernel_impl> SyclKernel,
                std::shared_ptr<detail::kernel_bundle_impl> KernelBundle,
-               CG::StorageInitHelper CGData, std::vector<ArgDesc> Args,
-               DeviceKernelInfo &DeviceKernelInfo,
+               CG::StorageInitHelper CGData,
                std::vector<std::shared_ptr<detail::stream_impl>> Streams,
                std::vector<std::shared_ptr<const void>> AuxiliaryResources,
-               CGType Type, ur_kernel_cache_config_t KernelCacheConfig,
-               bool KernelIsCooperative, bool MKernelUsesClusterLaunch,
-               size_t KernelWorkGroupMemorySize, detail::code_location loc = {})
-      : CG(Type, std::move(CGData), std::move(loc)), MNDRDesc(NDRDesc),
-        MHostKernel(std::move(HKernel)), MSyclKernel(std::move(SyclKernel)),
-        MKernelBundle(std::move(KernelBundle)), MArgs(std::move(Args)),
-        MDeviceKernelInfo(DeviceKernelInfo), MStreams(std::move(Streams)),
+               CGType Type, detail::code_location loc = {})
+      : CG(Type, std::move(CGData), std::move(loc)),
+        MKernelData(std::move(KernelData)), MHostKernel(std::move(HKernel)),
+        MSyclKernel(std::move(SyclKernel)),
+        MKernelBundle(std::move(KernelBundle)), MStreams(std::move(Streams)),
         MAuxiliaryResources(std::move(AuxiliaryResources)),
-        MAlternativeKernels{}, MKernelCacheConfig(std::move(KernelCacheConfig)),
-        MKernelIsCooperative(KernelIsCooperative),
-        MKernelUsesClusterLaunch(MKernelUsesClusterLaunch),
-        MKernelWorkGroupMemorySize(KernelWorkGroupMemorySize) {
+        MAlternativeKernels{} {
     assert(getType() == CGType::Kernel && "Wrong type of exec kernel CG.");
   }
 
   CGExecKernel(const CGExecKernel &CGExec) = default;
+  CGExecKernel(CGExecKernel &&CGExec) = default;
+  CGExecKernel &operator=(const CGExecKernel &CGExec) = default;
+  CGExecKernel &operator=(CGExecKernel &&CGExec) = default;
 
-  const std::vector<ArgDesc> &getArguments() const { return MArgs; }
-  std::string_view getKernelName() const {
-    return static_cast<std::string_view>(MDeviceKernelInfo.Name);
+  DeviceKernelInfo &getDeviceKernelInfo() const {
+    return *MKernelData.getDeviceKernelInfoPtr();
+  }
+
+  const NDRDescT &getNDRDesc() const { return MKernelData.getNDRDesc(); }
+  NDRDescT &getNDRDesc() { return MKernelData.getNDRDesc(); }
+  const std::vector<ArgDesc> &getArguments() const {
+    return MKernelData.getArgs();
+  }
+  std::vector<ArgDesc> &getArguments() { return MKernelData.getArgs(); }
+
+  KernelNameStrRefT getKernelName() const {
+    return MKernelData.getKernelName();
+  }
+  bool kernelUsesAsserts() const { return MKernelData.usesAssert(); }
+  bool isCooperativeKernel() const { return MKernelData.isCooperative(); }
+  bool kernelUsesClusterLaunch() const {
+    return MKernelData.usesClusterLaunch();
   }
   const std::vector<std::shared_ptr<detail::stream_impl>> &getStreams() const {
     return MStreams;

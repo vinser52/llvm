@@ -152,7 +152,8 @@ void dynamic_parameter_impl::updateAccessor(
 void dynamic_parameter_impl::updateCGArgValue(
     std::shared_ptr<sycl::detail::CG> CG, int ArgIndex, const void *NewValue,
     size_t Size) {
-  auto &Args = static_cast<sycl::detail::CGExecKernel *>(CG.get())->MArgs;
+  auto &Args =
+      static_cast<sycl::detail::CGExecKernel *>(CG.get())->getArguments();
   for (auto &Arg : Args) {
     if (Arg.MIndex != ArgIndex) {
       continue;
@@ -168,7 +169,8 @@ void dynamic_parameter_impl::updateCGArgValue(
 void dynamic_parameter_impl::updateCGAccessor(
     std::shared_ptr<sycl::detail::CG> CG, int ArgIndex,
     const sycl::detail::AccessorBaseHost *Acc) {
-  auto &Args = static_cast<sycl::detail::CGExecKernel *>(CG.get())->MArgs;
+  auto &Args =
+      static_cast<sycl::detail::CGExecKernel *>(CG.get())->getArguments();
 
   auto NewAccImpl = sycl::detail::getSyclObjImpl(*Acc);
   for (auto &Arg : Args) {
@@ -238,7 +240,8 @@ void dynamic_work_group_memory_impl::updateCGWorkGroupMem(
     std::shared_ptr<sycl::detail::CG> &CG, int ArgIndex,
     size_t NewBufferSizeInBytes) {
 
-  auto &Args = static_cast<sycl::detail::CGExecKernel *>(CG.get())->MArgs;
+  auto &Args =
+      static_cast<sycl::detail::CGExecKernel *>(CG.get())->getArguments();
   for (auto &Arg : Args) {
     if (Arg.MIndex != ArgIndex) {
       continue;
@@ -281,7 +284,8 @@ void dynamic_local_accessor_impl::updateCGLocalAccessor(
     std::shared_ptr<sycl::detail::CG> &CG, int ArgIndex,
     range<3> NewAllocationSize) {
 
-  auto &Args = static_cast<sycl::detail::CGExecKernel *>(CG.get())->MArgs;
+  auto &Args =
+      static_cast<sycl::detail::CGExecKernel *>(CG.get())->getArguments();
   for (auto &Arg : Args) {
     if (Arg.MIndex != ArgIndex) {
       continue;
